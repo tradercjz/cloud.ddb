@@ -1,0 +1,17 @@
+fastapi[all]
+uvicorn[standard]
+sqlalchemy[asyncpg]
+alembic
+pydantic[email]
+python-jose[cryptography]
+passlib[bcrypt]
+arq
+python-dotenv
+# Alibaba Cloud SDKs
+aliyun-python-sdk-core-v3
+aliyun-python-sdk-eci
+asyncpg
+alibabacloud_eci20180808==2.0.8
+alibabacloud_credentials
+alibabacloud_tea_openapi
+alibabacloud_tea_util
