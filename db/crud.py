@@ -1,3 +1,4 @@
+from typing import List
 from sqlalchemy.future import select
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
@@ -63,5 +64,14 @@ async def get_expired_environments(db: Session):
     result = await db.execute(
         select(models.Environment)
         .filter(models.Environment.expires_at <= datetime.utcnow(), models.Environment.status == "RUNNING")
+    )
+    return result.scalars().all()
+
+async def get_active_environments(db: Session) -> List[models.Environment]:
+    """Fetches all environments that are supposed to be active on the cloud."""
+    active_statuses = ["PROVISIONING", "RUNNING"]
+    result = await db.execute(
+        select(models.Environment)
+        .filter(models.Environment.status.in_(active_statuses))
     )
     return result.scalars().all()

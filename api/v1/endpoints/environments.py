@@ -9,6 +9,7 @@ from db import crud
 from core.security import get_current_user
 from worker import WorkerSettings
 from api.dependencies import get_arq_pool
+from services.aliyun_eci import aliyun_service
 
 router = APIRouter()
 
@@ -50,6 +51,19 @@ async def get_environment_status(
     env = await crud.get_environment(db, env_id=env_id)
     if not env or env.owner_id != current_user.id:
         raise HTTPException(status_code=404, detail="Environment not found")
+    
+    if env.status == "RUNNING" and env.container_group_id:
+        live_instances = await aliyun_service.describe_instances_batch(
+            env.region_id, [env.container_group_id]
+        )
+        if env.container_group_id not in live_instances:
+            print(f"Reactive check failed for {env_id}. Updating status.")
+            await crud.update_environment_status(
+                db, env.id, "DELETED", "Instance was not found on the cloud provider (verified on-demand)."
+            )
+            # Re-fetch the updated record to return to the user
+            env = await crud.get_environment(db, env_id=env_id)
+
     return env
 
 @router.delete("/{env_id}", status_code=status.HTTP_202_ACCEPTED)

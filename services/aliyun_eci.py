@@ -2,7 +2,7 @@
 
 import asyncio
 import time
-from typing import Tuple
+from typing import Dict, List, Tuple
 
 from alibabacloud_eci20180808.client import Client as EciClient
 from alibabacloud_tea_openapi import models as open_api_models
@@ -128,6 +128,34 @@ class AliyunECIService:
             await asyncio.sleep(10) # Wait 10 seconds between checks
 
         raise TimeoutError(f"ECI instance {container_group_id} did not become 'Running' within {timeout_seconds} seconds.")
+    
+    async def describe_instances_batch(self, region_id: str, container_group_ids: List[str]) -> Dict[str, any]:
+        """
+        Describes a batch of ECI instances and returns a dictionary mapping
+        instance_id to the cloud provider's instance object.
+        """
+        if not container_group_ids:
+            return {}
+            
+        client = self._create_client(region_id)
+        describe_request = eci_models.DescribeContainerGroupsRequest(
+            region_id=region_id,
+            container_group_ids=container_group_ids
+        )
+        
+        try:
+            response = await client.describe_container_groups_with_options_async(describe_request, util_models.RuntimeOptions())
+            
+            # Create a lookup dictionary for easy access
+            live_instances = {
+                cg.container_group_id: cg 
+                for cg in response.body.container_groups
+            }
+            return live_instances
+        except Exception as e:
+            print(f"Error describing instances in batch: {e}")
+            return {} # On error, return an empty dict
+
 
     async def delete_instance(self, container_group_id: str, region_id: str):
         """

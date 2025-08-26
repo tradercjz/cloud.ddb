@@ -1,6 +1,6 @@
 import asyncio
 from datetime import datetime
-from arq.connections import RedisSettings
+from arq.connections import RedisSettings, create_pool
 
 from core.config import settings
 from db.session import SessionLocal
@@ -43,12 +43,74 @@ async def delete_environment_task(ctx, env_id: str):
 
 async def cleanup_expired_environments_task(ctx):
     """ARQ cron job to clean up expired environments."""
+    
+    arq_pool = await create_pool(WorkerSettings.redis_settings)
     db = SessionLocal()
+    
     try:
+        print("--- CRON JOB: Running cleanup for expired environments... ---") # 添加日志
         expired_envs = await crud.get_expired_environments(db)
+        
+        if not expired_envs:
+            print("--- CRON JOB: No expired environments found. ---")
+            return
+
+        print(f"--- CRON JOB: Found {len(expired_envs)} expired environments to clean up. ---")
         for env in expired_envs:
             await crud.update_environment_status(db, env.id, "DELETING", "Environment expired. Cleaning up.")
-            await ctx['arq_pool'].enqueue_job("delete_environment_task", env.id)
+            
+
+            await arq_pool.enqueue_job("delete_environment_task", env.id)
+            print(f"--- CRON JOB: Enqueued deletion task for env_id: {env.id} ---")
+
+    except Exception as e:
+        # 添加错误日志
+        print(f"--- CRON JOB: An ERROR occurred during cleanup: {e} ---")
+    finally:
+        await db.close()
+        if arq_pool:
+            await arq_pool.close()
+
+async def sync_cloud_state_task(ctx):
+    """
+    Periodically checks our database state against the actual state in Alibaba Cloud
+    and marks any missing instances as deleted.
+    """
+    db = SessionLocal()
+    try:
+        print("--- CRON JOB: Running cloud state synchronization... ---")
+        active_envs = await crud.get_active_environments(db)
+        if not active_envs:
+            print("--- CRON JOB: No active environments to sync. ---")
+            return
+
+        # Batch instance IDs by region for efficient API calls
+        ids_by_region = {}
+        for env in active_envs:
+            if env.region_id not in ids_by_region:
+                ids_by_region[env.region_id] = []
+            if env.container_group_id:
+                 ids_by_region[env.region_id].append(env.container_group_id)
+
+        all_live_instances = {}
+        for region_id, group_ids in ids_by_region.items():
+            live_in_region = await aliyun_service.describe_instances_batch(region_id, group_ids)
+            all_live_instances.update(live_in_region)
+            
+        # Reconcile: Find ghosts in our DB that are not live in the cloud
+        ghost_count = 0
+        for env in active_envs:
+            if env.container_group_id and env.container_group_id not in all_live_instances:
+                ghost_count += 1
+                print(f"--- CRON JOB: Found ghost environment {env.id}. Marking as DELETED. ---")
+                await crud.update_environment_status(
+                    db, env.id, "DELETED", "Instance was deleted from the cloud provider externally."
+                )
+        
+        print(f"--- CRON JOB: Sync complete. Found and marked {ghost_count} ghost environments. ---")
+
+    except Exception as e:
+        print(f"--- CRON JOB: An ERROR occurred during state sync: {e} ---")
     finally:
         await db.close()
 
@@ -61,6 +123,7 @@ class WorkerSettings:
             cleanup_expired_environments_task, 
             minute=0,
             run_at_startup=True
-        )
+        ),
+        cron(sync_cloud_state_task,  minute={0,5,10,15,20,25,30,35,40,45,50,55}, run_at_startup=True)
     ]
     redis_settings = RedisSettings(host=settings.REDIS_HOST, port=settings.REDIS_PORT)
