@@ -16,3 +16,4 @@ alibabacloud_credentials
 alibabacloud_tea_openapi
 alibabacloud_tea_util
 dolphindb
+openai

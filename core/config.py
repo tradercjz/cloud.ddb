@@ -1,5 +1,7 @@
 from pydantic_settings import BaseSettings 
 
+from typing import Optional
+
 class Settings(BaseSettings):
     PROJECT_NAME: str = "DolphinDB Cloud Service"
     API_V1_STR: str = "/api/v1"
@@ -22,6 +24,10 @@ class Settings(BaseSettings):
     ALIYUN_SECURITY_GROUP_ID: str
     ALIYUN_VSWITCH_ID: str
     DDB_CONTAINER_IMAGE_URL: str
+
+    OPENAI_API_KEY: str
+    OPENAI_API_BASE_URL: Optional[str] = None
+    OPENAI_MODEL_NAME: Optional[str] = "gpt-3.5-turbo" # 提供一个默认模型
 
     class Config:
         case_sensitive = True
