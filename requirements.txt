@@ -15,3 +15,4 @@ alibabacloud_eci20180808==2.0.8
 alibabacloud_credentials
 alibabacloud_tea_openapi
 alibabacloud_tea_util
+dolphindb
