@@ -15,7 +15,8 @@ import dolphindb
 from typing import Dict, Any
 from fastapi.responses import StreamingResponse
 import json
-import asyncio 
+import asyncio
+from utils.json_utils import custom_json_serializer
 
 router = APIRouter()
 
@@ -400,6 +401,7 @@ async def environment_chat_stream(
             await asyncio.to_thread(s.connect, env.public_ip, env.port, "admin", "123456")
             result = await asyncio.to_thread(s.run, generated_script)
 
+
             # --- 事件 5: 发送最终结果 ---
             import pandas as pd
             if isinstance(result, pd.DataFrame):
@@ -410,8 +412,11 @@ async def environment_chat_stream(
                  result_json = result
             else:
                 result_json = [{"result": result}]
-
-            yield f"data: {json.dumps({'type': 'final_result', 'content': result_json})}\n\n"
+            final_json_string = json.dumps(
+                {'type': 'final_result', 'content': result_json},
+                default=custom_json_serializer
+            )
+            yield f"data: {final_json_string}\n\n"
 
         except Exception as e:
             error_message = f"Error executing DolphinDB script: {str(e)}"
