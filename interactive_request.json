@@ -1,0 +1,14 @@
+{
+  "conversation_history": [
+    {
+      "role": "user",
+      "content": "我有一些股票交易数据，表名叫 trades。帮我分析一下 AAPL 这只股票的交易情况。"
+    }
+  ],
+  "injected_context": {
+    "schemas": {
+      "markdown": "<INJECTED_CONTEXT>\nThe user has injected the following table schemas...\n### Schema for: `dfs://dolphindb_cloud_test/trades`\n| trade_date | symbol | price | volume |\n|---|---|---|---|\n| DATE | SYMBOL | DOUBLE | INT |\n</INJECTED_CONTEXT>",
+      "source_paths": ["dfs://dolphindb_cloud_test/trades"]
+    }
+  }
+}

@@ -1,10 +1,13 @@
 
-from fastapi import APIRouter, Depends, HTTPException, status, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, status, Response
 from typing import List
 from arq.connections import ArqRedis
 import openai
 
-from schemas import EnvironmentCreate, EnvironmentPublic, UserInDB, ChatQueryRequest, ChatQueryResponse
+from agent.code_executor import CodeExecutor
+from agent.interactive_sql_executor import InteractiveSQLExecutor
+from agent.tool_manager import ToolManager
+from schemas import EnvironmentCreate, EnvironmentPublic, InteractiveSQLRequest, UserInDB, ChatQueryRequest, ChatQueryResponse
 from db.session import get_db
 from db import crud
 from core.security import get_current_user
@@ -17,6 +20,16 @@ from fastapi.responses import StreamingResponse
 import json
 import asyncio
 from utils.json_utils import custom_json_serializer
+from pydantic import BaseModel
+import queue
+import threading
+from agent.tools.enhanced_ddb_tools import (
+    InspectDatabaseTool, ListTablesTool, DescribeTableTool, QueryDataTool,
+    CreateSampleDataTool, OptimizeQueryTool, GetFunctionDocumentationTool,
+)
+from agent.tools.ddb_tools import RunDolphinDBScriptTool
+from agent.tools.interactive_tools import AskForHumanFeedbackTool, PlanModeResponseTool
+from agent.tools.completion_tool import AttemptCompletionTool
 
 router = APIRouter()
 
@@ -430,4 +443,121 @@ async def environment_chat_stream(
 
 
     # 3. 返回一个StreamingResponse，它会消耗上面定义的异步生成器
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+@router.post("/{env_id}/interactive-sql")
+async def run_interactive_sql_task(
+    env_id: str,
+    request: InteractiveSQLRequest,
+    fastapi_request: Request,
+    db = Depends(get_db),
+    current_user: UserInDB = Depends(get_current_user)
+):
+    """
+    Executes a stateless interactive SQL Agent loop for a specific environment.
+    Streams back all status updates from the agent's execution cycle.
+    """
+    # 1. 授权和环境检查
+    env = await crud.get_environment(db, env_id=env_id)
+    if not env or env.owner_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Environment not found")
+    if env.status != "RUNNING" or not env.public_ip:
+        raise HTTPException(status_code=409, detail="Environment is not in a RUNNING state.")
+
+    # 2. 获取在应用启动时创建的执行器模板
+    executor_template: InteractiveSQLExecutor = fastapi_request.app.state.interactive_executor_template
+
+    # 3. 动态创建本次请求专用的、配置了正确数据库连接的组件
+    try:
+        connection_details = {"host": env.public_ip, "port": env.port, "user": "admin", "password": "123456"}
+        
+        # 创建本次请求专用的CodeExecutor
+        request_specific_executor = CodeExecutor(**connection_details)
+
+        request_specific_tool_manager =  ToolManager([
+            RunDolphinDBScriptTool(executor=request_specific_executor),
+            GetFunctionDocumentationTool(project_path="."),
+            InspectDatabaseTool(executor=request_specific_executor),
+            ListTablesTool(executor=request_specific_executor),
+            DescribeTableTool(executor=request_specific_executor),
+            QueryDataTool(executor=request_specific_executor),
+            CreateSampleDataTool(executor=request_specific_executor),
+            OptimizeQueryTool(executor=request_specific_executor),
+            AskForHumanFeedbackTool(),
+            PlanModeResponseTool(),
+            AttemptCompletionTool(),
+        ])
+        
+        # 创建本次请求专用的InteractiveSQLExecutor
+        request_specific_interactive_executor = InteractiveSQLExecutor(
+            tool_manager=request_specific_tool_manager
+        )
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to configure agent for environment: {e}")
+        
+    # 4. 定义异步生成器以处理SSE流
+    async def event_generator():
+        q = queue.Queue()
+
+        def agent_thread_target():
+            """在单独线程中运行同步的Agent任务生成器"""
+            try:
+                user_input = request.conversation_history[-1]['content'] if request.conversation_history else ""
+                
+                # 使用我们为本次请求特制的执行器
+                task_generator = request_specific_interactive_executor.execute_task(
+                    user_input=user_input,
+                    conversation_history=request.conversation_history,
+                    injected_context=request.injected_context
+                )
+                
+                for update in task_generator:
+                    q.put(update)
+            except Exception as e:
+                import traceback
+                print(f"Error in agent thread: {e}\n{traceback.format_exc()}")
+                q.put(e)
+            finally:
+                # 确保无论如何都有结束信号
+                q.put(None)
+                # 关闭本次请求的数据库连接
+                request_specific_executor.close()
+
+        # 启动工作线程
+        thread = threading.Thread(target=agent_thread_target)
+        thread.start()
+
+        # 从队列中读取并流式发送结果
+        while True:
+            if await fastapi_request.is_disconnected():
+                print(f"Client for env {env_id} disconnected, stopping agent task.")
+                # 可以在这里添加更复杂的线程停止逻辑
+                break
+            
+            try:
+                update = q.get_nowait()
+            except queue.Empty:
+                await asyncio.sleep(0.05)
+                continue
+
+            if update is None: # 结束信号
+                break
+            
+            if isinstance(update, Exception):
+                yield f"data: {json.dumps({'type': 'error', 'content': str(update)})}\n\n"
+                break
+            
+            # 将Pydantic模型或字典转换为JSON字符串
+            if isinstance(update, BaseModel):
+                # 使用自定义序列化器处理特殊类型
+                json_payload = update.model_dump_json()
+            elif isinstance(update, dict):
+                # 对于字典，我们需要手动调用json.dumps并传入default处理器
+                json_payload = json.dumps(update, default=str) # 使用str作为简单的备选方案
+            else:
+                json_payload = json.dumps({"type": "unknown", "content": str(update)})
+            
+            yield f"data: {json_payload}\n\n"
+
     return StreamingResponse(event_generator(), media_type="text/event-stream")

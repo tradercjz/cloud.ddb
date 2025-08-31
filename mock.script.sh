@@ -19,3 +19,9 @@ curl -N -X POST "http://127.0.0.1:8001/api/v1/environments/ddb-env-162494f1/chat
 -H "Authorization: Bearer $TOKEN" \
 -H "Content-Type: application/json" \
 -d @request.json
+
+
+curl -N -X POST "http://127.0.0.1:8001/api/v1/environments/ddb-env-b2024148/interactive-sql" \
+-H "Authorization: Bearer $TOKEN" \
+-H "Content-Type: application/json" \
+-d @interactive_request.json

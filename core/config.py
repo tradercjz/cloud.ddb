@@ -29,6 +29,15 @@ class Settings(BaseSettings):
     OPENAI_API_BASE_URL: Optional[str] = None
     OPENAI_MODEL_NAME: Optional[str] = "gpt-3.5-turbo" # 提供一个默认模型
 
+    DDB_HOST: str
+    DDB_PORT: int
+    DDB_USER: str
+    DDB_PASSWORD: str
+
+    LLM_API_KEY: str
+    LLM_BASE_URL: Optional[str] = None
+    LLM_MODEL: Optional[str] = "google/gemini-2.5-flash" # 提供一个默认模型
+
     class Config:
         case_sensitive = True
         env_file = ".env"
