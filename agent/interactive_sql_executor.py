@@ -197,7 +197,14 @@ class InteractiveSQLExecutor:
                 
                 llm_response = ""
                 try:
-                    while True: next(response_generator)
+                    while True: 
+                        ck = next(response_generator)
+                        yield {
+                            "type": "task_status", # 保持和其他事件一致的顶级类型
+                            "subtype": "llm_chunk", # 这是我们的新 subtype
+                            "content": ck.data,
+                            "message": "AI is thinking..." # 可以附带一条消息
+                        }
                 except StopIteration as e:
                     llm_response = e.value.content
 
