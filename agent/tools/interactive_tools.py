@@ -1,5 +1,5 @@
 
-from .tool_interface import BaseTool, ToolInput, ExecutionResult
+from .tool_interface import BaseTool, ToolInput, ExecutionResult, ensure_generator
 from pydantic import Field
 from typing import List, Dict, Any, Optional
 
@@ -15,6 +15,7 @@ class AskForHumanFeedbackTool(BaseTool):
     )
     args_schema = AskForHumanFeedbackInput
 
+    @ensure_generator
     def run(self, args: AskForHumanFeedbackInput) -> ExecutionResult:
         """
         Signals the executor to pause and wait for human input regarding an error.
@@ -41,6 +42,7 @@ class PlanModeResponseTool(BaseTool):
     description = "Presents a plan or asks a clarifying question to the user and waits for their input. This is the primary tool for communication in PLAN_MODE."
     args_schema = PlanModeResponseInput
 
+    @ensure_generator
     def run(self, args: PlanModeResponseInput) -> ExecutionResult:
         """
         This tool's execution is special. It doesn't perform an action but signals

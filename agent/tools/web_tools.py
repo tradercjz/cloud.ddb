@@ -4,7 +4,7 @@ import json
 from pydantic import Field
 
 from agent.execution_result import ExecutionResult 
-from .tool_interface import BaseTool, ToolInput
+from .tool_interface import BaseTool, ToolInput, ensure_generator
 
 # 1. 定义工具的输入参数
 class BaiduSearchInput(ToolInput):
@@ -24,6 +24,7 @@ class BaiduSearchTool(BaseTool):
     )
     args_schema = BaiduSearchInput
 
+    @ensure_generator
     def run(self, args: BaiduSearchInput) -> ExecutionResult:
         """
         Executes the Baidu AI Search and returns the result.

@@ -1,6 +1,6 @@
 from pydantic import Field
 from agent.execution_result import ExecutionResult
-from .tool_interface import BaseTool, ToolInput
+from .tool_interface import BaseTool, ToolInput, ensure_generator
 
 class AttemptCompletionInput(ToolInput):
     final_answer: str = Field(description="The final, complete answer to the user's request. This should be a comprehensive summary of the results, ready to be presented to the user.")
@@ -13,6 +13,7 @@ class AttemptCompletionTool(BaseTool):
     )
     args_schema = AttemptCompletionInput
 
+    @ensure_generator
     def run(self, args: AttemptCompletionInput) -> ExecutionResult:
         """
         Signals that the task is complete. The data payload contains a special

@@ -14,7 +14,7 @@ from agent.tool_manager import ToolManager
 from agent.tools.ddb_tools import RunDolphinDBScriptTool
 from agent.tools.enhanced_ddb_tools import (
     InspectDatabaseTool, ListTablesTool, DescribeTableTool, QueryDataTool,
-    CreateSampleDataTool, OptimizeQueryTool, GetFunctionDocumentationTool,
+    CreateSampleDataTool, OptimizeQueryTool, GetFunctionDocumentationTool, SearchKnowledgeBaseTool,
 )
 from agent.tools.interactive_tools import AskForHumanFeedbackTool, PlanModeResponseTool
 from agent.tools.completion_tool import AttemptCompletionTool
@@ -54,6 +54,7 @@ async def lifespan(app: FastAPI):
             AskForHumanFeedbackTool(),
             PlanModeResponseTool(),
             AttemptCompletionTool(),
+            SearchKnowledgeBaseTool()
         ])
         
         # 初始化交互式SQL执行器

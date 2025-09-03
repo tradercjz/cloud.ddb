@@ -25,7 +25,7 @@ import queue
 import threading
 from agent.tools.enhanced_ddb_tools import (
     InspectDatabaseTool, ListTablesTool, DescribeTableTool, QueryDataTool,
-    CreateSampleDataTool, OptimizeQueryTool, GetFunctionDocumentationTool,
+    CreateSampleDataTool, OptimizeQueryTool, GetFunctionDocumentationTool, SearchKnowledgeBaseTool,
 )
 from agent.tools.ddb_tools import RunDolphinDBScriptTool
 from agent.tools.interactive_tools import AskForHumanFeedbackTool, PlanModeResponseTool
@@ -486,6 +486,7 @@ async def run_interactive_sql_task(
             AskForHumanFeedbackTool(),
             PlanModeResponseTool(),
             AttemptCompletionTool(),
+            SearchKnowledgeBaseTool()
         ])
         
         # 创建本次请求专用的InteractiveSQLExecutor

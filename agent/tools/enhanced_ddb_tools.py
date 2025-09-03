@@ -2,12 +2,19 @@
 
 import dolphindb as ddb
 from pydantic import Field, field_validator
-from typing import List, Dict, Any, Optional
+from typing import Generator, List, Dict, Any, Optional
 import json
 import os
 
-from agent.execution_result import ExecutionResult 
-from .tool_interface import BaseTool, ToolInput
+from agent.execution_result import ExecutionResult
+from context.context_builder import ContextBuilder
+from context.pruner import Document
+from llm.llm_prompt import llm
+from rag.candidate_selector import LLMCandidateSelector
+from rag.rag_status import AnyRagStatus, RagEnd, RagIndexLoaded, RagRerankStart, RagSelectionStart, RagStart
+from rag.text_index_manager import TextIndexManager
+from rag.types import BaseIndexModel 
+from .tool_interface import BaseTool, ToolInput, ensure_generator
 from agent.code_executor import CodeExecutor
 
 
@@ -24,6 +31,7 @@ class InspectDatabaseTool(BaseTool):
     def __init__(self, executor: CodeExecutor):
         self.executor = executor
     
+    @ensure_generator
     def run(self, args: InspectDatabaseInput) -> ExecutionResult:
         """检查数据库状态"""
         inspection_script = """
@@ -53,6 +61,7 @@ class ListTablesTool(BaseTool):
     def __init__(self, executor: CodeExecutor):
         self.executor = executor
     
+    @ensure_generator
     def run(self, args: ListTablesInput) -> ExecutionResult:
         if args.database_name:
             script = f"""
@@ -83,6 +92,7 @@ class DescribeTableTool(BaseTool):
     def __init__(self, executor: CodeExecutor):
         self.executor = executor
     
+    @ensure_generator
     def run(self, args: DescribeTableInput) -> ExecutionResult:
         if args.database_name:
             table_ref = f'database("{args.database_name}").loadTable("{args.table_name}")'
@@ -125,6 +135,7 @@ class ValidateScriptTool(BaseTool):
     def __init__(self, executor: CodeExecutor):
         self.executor = executor
     
+    @ensure_generator
     def run(self, args: ValidateScriptInput) -> ExecutionResult:
         # DolphinDB doesn't have a built-in syntax validator, so we'll try to parse it
         validation_script = f"""
@@ -153,6 +164,7 @@ class QueryDataTool(BaseTool):
     def __init__(self, executor: CodeExecutor):
         self.executor = executor
     
+    @ensure_generator
     def run(self, args: QueryDataInput) -> ExecutionResult:
         # Add limit to query if not already present
         query = args.query.strip()
@@ -178,6 +190,7 @@ class CreateSampleDataTool(BaseTool):
     def __init__(self, executor: CodeExecutor):
         self.executor = executor
     
+    @ensure_generator
     def run(self, args: CreateSampleDataInput) -> ExecutionResult:
         table_name = args.table_name or f"sample_{args.data_type}"
         
@@ -240,6 +253,7 @@ class OptimizeQueryTool(BaseTool):
     def __init__(self, executor: CodeExecutor):
         self.executor = executor
     
+    @ensure_generator
     def run(self, args: OptimizeQueryInput) -> ExecutionResult:
         # This is a simplified optimization analyzer
         # In practice, you might want to use DolphinDB's query plan analysis
@@ -307,6 +321,7 @@ class GetFunctionDocumentationTool(BaseTool):
         # 路径现在指向 funcs 子目录
         self.base_doc_path = os.path.join(project_path, "documentation", "funcs")
 
+    @ensure_generator
     def run(self, args: GetFunctionDocumentationInput) -> ExecutionResult:
         """
         Reads and returns the content of a function's documentation file 
@@ -329,7 +344,7 @@ class GetFunctionDocumentationTool(BaseTool):
         if not os.path.exists(doc_file_path):
             return ExecutionResult(
                 success=False,
-                error_message=f"Documentation for function '{function_name}' not found."
+                error_message=f"Documentation for function '{function_name}' not found in '{doc_file_path}'."
             )
 
         try:
@@ -358,4 +373,170 @@ class GetFunctionDocumentationTool(BaseTool):
                 success=False,
                 executed_script=f"Failed to read documentation for function '{function_name}'.",
                 error_message=str(e)
+            )
+        
+
+class SearchKnowledgeBaseInput(ToolInput):
+    """Input model for the knowledge base search tool."""
+    query: str = Field(description="The specific error message, function name, or concept to search for in the documentation and code snippets.")
+    conversation_history: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description="The recent conversation history as a list of message objects, to provide context for the search."
+    )
+class SearchKnowledgeBaseTool(BaseTool):
+    """
+    A tool to search the project's knowledge base (RAG system) for relevant information.
+    Use this tool when you encounter an error, are unsure about a function's usage,
+    or need more context to solve a problem. It provides context from documentation and code examples.
+    """
+    name = "search_knowledge_base"
+    description = (
+        "Searches the knowledge base for documentation and code examples related to a query. "
+        "This is the primary tool for debugging and self-correction."
+    )
+    args_schema = SearchKnowledgeBaseInput
+
+    def __init__(self):
+        self.project_path = "/home/jzchen/ddb_agent"
+        self.index_file = "/home/jzchen/ddb_agent/.ddb_agent/file_index.json"
+        self.index_manager = TextIndexManager("/home/jzchen/ddb_agent", self.index_file)
+        self.context_builder = ContextBuilder(model_name=os.getenv("LLM_MODEL"), max_window_size=128000)
+
+
+        @llm.prompt()
+        def _default_chat_prompt(conversation_history: List[Dict[str, str]]):
+            """"
+            You are a helpful DolphinDB assistant. Continue the conversation naturally.
+            The user's latest message is the last one in the history.
+            请严格按照相关资料来回答用户问题，如果没有搜到相关资料，请回答我不清楚,千万不要臆造"
+            """
+        
+        self.chat_prompt_func = _default_chat_prompt
+
+        pass
+
+    def _get_files_content(self, file_paths: List[str]) -> List[Document]:
+        """Reads file contents and creates Document objects."""
+        sources = []
+        for file_path in file_paths:
+            full_path = os.path.join(self.project_path, file_path)
+            try:
+                with open(full_path, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                # 从索引中获取预先计算好的token数
+                index_info = self.index_manager.get_index_by_filepath(file_path)
+                tokens = index_info.tokens if index_info else -1 # 如果找不到索引，则让Document自己计算
+                sources.append(Document(file_path, content, tokens))
+            except Exception as e:
+                print(f"Warning: Could not read file {file_path}: {e}")
+        return sources
+
+    def retrieve(self, query: str, top_k: int = 5) -> Generator[AnyRagStatus, None, List[Document]]:
+        """
+        Retrieves the most relevant documents using a two-step process.
+        """
+        yield RagStart(message="🚀 Starting retrieval process...")
+        
+        # 1. 从所有索引源获取全部索引数据
+        all_text_indices = self.index_manager.get_all_indices()
+        all_indices = all_text_indices
+
+        if not all_indices:
+            print("No indices found to search from.")
+            return []
+
+        yield RagIndexLoaded(message=f"🔍 Found {len(all_indices)} total index items.", total_items=len(all_indices))
+        yield RagSelectionStart(
+            message=f"Phase 1: Selecting candidates using llm strategy...",
+            strategy="llm"
+        )
+        
+        # 2. 阶段一：粗筛 (Candidate Selection)
+        candidates: List[BaseIndexModel]
+        
+        selector = LLMCandidateSelector(all_indices, self.index_manager)
+        candidates = yield from selector.select(query, max_workers=10) # 并发LLM筛选
+        
+
+        if not candidates:
+            print("No relevant candidates found after initial selection.")
+            return []
+        
+        yield RagRerankStart(
+            message="Phase 2: Using LLM to re-rank candidates...",
+            candidate_count=len(candidates)
+        )
+
+        # 我们直接从已排序的候选中选取前 top_k 个
+        final_candidates = candidates[:top_k]
+        final_identifiers = [c.file_path for c in final_candidates]
+        
+        yield RagEnd(
+            message=f"Retrieval process completed. Selected top {len(final_identifiers)} documents.",
+            final_document_count=len(final_identifiers)
+        )
+
+        # 4. 根据最终的标识符列表，获取并返回文件/文本块内容
+        return self._get_files_content(final_identifiers)
+
+    @ensure_generator
+    def run(self, args: SearchKnowledgeBaseInput) -> Generator[Any, None, ExecutionResult]:
+        """
+        Executes the RAG retrieval process.
+        """
+        try:
+            # DDBRAG.retrieve 是一个生成器，我们需要消耗它来获取最终结果
+            relevant_files = yield from  self.retrieve(args.query, top_k=3)
+            
+            #print("Relevant files:", relevant_files)
+
+            # 2. 上下文构建
+            system_prompt = "You are a helpful assistant. Your task is to answer the user's question strictly based on the information found in the provided official DolphinDB documentation links. If you cannot find a direct answer in the provided links, you must state that you cannot find a built-in function for this purpose based on the documentation. Do not use any prior knowledge."
+
+            final_messages = self.context_builder.build(
+                system_prompt=system_prompt,
+                conversations=args.conversation_history,
+                file_sources=relevant_files,
+                task_type='chat',
+                file_pruning_strategy='extract'
+            )
+
+            # 3. 调用 LLM 并流式传输结果 (yields StreamChunk)
+            assistant_response_gen = self.chat_prompt_func(
+                conversation_history=final_messages
+            )
+
+            final_llm_response = None
+            try:
+                while True:
+                    chunk = next(assistant_response_gen)
+                    yield chunk # 将 StreamChunk 直接冒泡给调用者
+            except StopIteration as e:
+                final_llm_response = e.value
+
+            print(final_llm_response)
+
+            # 4. 任务结束，yield 最终消息对象
+            if final_llm_response and getattr(final_llm_response, 'success', False):
+                final_message_obj = {
+                    "role": "assistant",
+                    "content": final_llm_response.content
+                }
+
+                return ExecutionResult(
+                    success=True,
+                    data=f"Found the following relevant information:\n\n{str(final_message_obj)}"
+                )
+            elif final_llm_response: # 如果失败
+                print("failed:", final_llm_response)
+                return ExecutionResult(
+                    success=False,
+                    error_message=f"Failed to search knowledge base: {getattr(final_llm_response, 'error_message', 'Unknown error')}"
+                )
+                
+        except Exception as e:
+
+            return ExecutionResult(
+                success=False,
+                error_message=f"Failed to search knowledge base: {str(e)}"
             )

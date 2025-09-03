@@ -229,20 +229,21 @@ class InteractiveSQLExecutor:
                 tool_name = action["tool_name"]
                 arguments = action["arguments"]
 
+                if (tool_name == "search_knowledge_base"): arguments["conversation_history"] = conversation_history
+
                 # 6. Execute action and process result (logic remains the same as before)
                 yield ReactAction(tool_name=tool_name, tool_args=arguments, message=f"🎬 Calling tool: {tool_name}")
-                exec_result = self.tool_manager.call_tool(tool_name, arguments)
-                
-                is_error = not exec_result.success
+                exec_result = yield from self.tool_manager.call_tool(tool_name, arguments)
+                is_error = not exec_result or not exec_result.success
                 observation_content = ""
                 
                 if is_error:
                     consecutive_errors += 1
                     if consecutive_errors >= max_consecutive_errors:
-                        error_message = exec_result.error_message or "Unknown error."
+                        error_message = exec_result.error_message if exec_result else "Unknown error."
                         yield TaskEnd(success=False, final_message=f"Task aborted after {max_consecutive_errors} consecutive errors. Last error:\n\n{error_message}", message="❌ Task failed: too many consecutive errors.")
                         return
-                    error_message = exec_result.error_message or "An unknown error occurred."
+                    error_message = exec_result.error_message if exec_result else "An unknown error occurred."
 
                     # 不再向用户求助，而是将错误信息直接作为观察结果
                     # 这会迫使 LLM 在下一轮思考如何处理这个错误

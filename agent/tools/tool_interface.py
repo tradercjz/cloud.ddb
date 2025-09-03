@@ -5,6 +5,20 @@ from pydantic import BaseModel, Field
 
 from agent.execution_result import ExecutionResult
 
+import types
+def ensure_generator(func):
+    def wrapper(*args, **kwargs):
+        result = func(*args, **kwargs)
+        # 如果是生成器，直接返回
+        if isinstance(result, types.GeneratorType):
+            return result
+        # 否则包装成生成器，并通过 return 把结果返回
+        def gen():
+            return result
+            yield  # 这里永远不会执行，仅为了语法合法
+        return gen()
+    return wrapper
+
 class ToolInput(BaseModel):
     pass
 

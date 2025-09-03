@@ -1,4 +1,4 @@
-from typing import Optional, List
+from typing import Any, Dict, Generator, Optional, List
 from agent.execution_result import ExecutionResult
 from agent.tools.tool_interface import BaseTool
 
@@ -29,7 +29,7 @@ class ToolManager:
             base_tools = [tool.get_definition() for tool in all_tools if tool.name != 'plan_mode_response']
             return base_tools
 
-    def call_tool(self, tool_name: str, args: dict) -> ExecutionResult:
+    def call_tool(self, tool_name: str, args: dict) ->  Generator[Any, None, ExecutionResult]:
         # 调用常规工具
         if tool_name not in self.tools:
             raise ToolNotFoundError(f"Tool '{tool_name}' not found.")
@@ -38,7 +38,8 @@ class ToolManager:
         try:
             # Pydantic v2 用 model_validate
             validated_args = tool.args_schema.model_validate(args)
-            return tool.run(validated_args)
+            z = yield from  tool.run(validated_args)
+            return z
         except Exception as e:
             raise ToolArgumentValidationError(f"Error validating arguments for tool '{tool_name}': {e}") from e
      
