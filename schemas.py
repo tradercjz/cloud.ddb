@@ -67,3 +67,4 @@ class InteractiveSQLRequest(BaseModel):
     # 用户为本次任务注入的上下文（例如，选中的表）
     # 我们用一个字典来保持灵活性
     injected_context: Optional[Dict[str, Any]] = None
+    env_id: Optional[str] = Field(None, description="The optional ID of the DolphinDB environment to connect to.")
