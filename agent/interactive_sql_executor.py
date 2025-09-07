@@ -145,7 +145,7 @@ class InteractiveSQLExecutor:
         
         try:
             if not conversation_history or conversation_history[-1].get("content") != user_input:
-                 conversation_history.append({"role": "user", "content": user_input})
+                conversation_history.append({"role": "user", "content": user_input})
             
             history = conversation_history
 

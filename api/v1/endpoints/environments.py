@@ -422,7 +422,7 @@ async def environment_chat_stream(
                 result_df = result.where(pd.notnull(result), None)
                 result_json = result_df.to_dict(orient='records')
             elif isinstance(result, list) or isinstance(result, dict):
-                 result_json = result
+                result_json = result
             else:
                 result_json = [{"result": result}]
             final_json_string = json.dumps(
