@@ -68,3 +68,10 @@ class InteractiveSQLRequest(BaseModel):
     # 我们用一个字典来保持灵活性
     injected_context: Optional[Dict[str, Any]] = None
     env_id: Optional[str] = Field(None, description="The optional ID of the DolphinDB environment to connect to.")
+    
+class FeedbackCreate(BaseModel):
+    turn_id: str = Field(..., description="The unique ID of the AI response node (turn).")
+    feedback: str = Field(..., description="The user's feedback, e.g., 'like' or 'dislike'.")
+    prompt: str = Field(..., description="The user's prompt that triggered this turn.")
+    response: str = Field(..., description="The AI's final response for this turn.")
+    conversation_history: List[Dict[str, Any]] = Field(..., description="The full conversation history up to this turn.")

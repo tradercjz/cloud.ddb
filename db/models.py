@@ -3,6 +3,8 @@ from datetime import datetime
 from sqlalchemy import Column, Integer, String, DateTime, Float, ForeignKey
 from sqlalchemy.orm import relationship
 from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.types import JSON
 
 Base = declarative_base()
 
@@ -33,3 +35,23 @@ class Environment(Base):
     expires_at = Column(DateTime, nullable=False)
     
     owner = relationship("User", back_populates="environments")
+    
+class Feedback(Base):
+    __tablename__ = "feedback"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    turn_id = Column(String, index=True, nullable=False, unique=True)
+    owner_id = Column(Integer, ForeignKey("users.id"))
+    
+    feedback_type = Column(String, nullable=False) # 'like' or 'dislike'
+    prompt = Column(String, nullable=False)
+    response = Column(String, nullable=False)
+    
+    # Use JSON type for conversation history. 
+    # If using PostgreSQL, JSONB is more efficient.
+    # For SQLite or MySQL, JSON is a good choice.
+    conversation_history = Column(JSON, nullable=False)
+    
+    created_at = Column(DateTime, default=datetime.utcnow)
+    
+    owner = relationship("User")

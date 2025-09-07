@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
 
 from . import models
-from schemas import UserCreate, EnvironmentCreate
+from schemas import UserCreate, EnvironmentCreate, FeedbackCreate 
 from core.security import get_password_hash
 from core.config import settings
 
@@ -75,3 +75,17 @@ async def get_active_environments(db: Session) -> List[models.Environment]:
         .filter(models.Environment.status.in_(active_statuses))
     )
     return result.scalars().all()
+
+async def create_feedback(db: Session, feedback: FeedbackCreate, owner_id: int):
+    db_feedback = models.Feedback(
+        turn_id=feedback.turn_id,
+        owner_id=owner_id,
+        feedback_type=feedback.feedback,
+        prompt=feedback.prompt,
+        response=feedback.response,
+        conversation_history=feedback.conversation_history
+    )
+    db.add(db_feedback)
+    await db.commit()
+    await db.refresh(db_feedback)
+    return db_feedback
