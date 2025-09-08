@@ -3,7 +3,7 @@ import dolphindb as ddb
 class DatabaseSession:
     """数据库会话管理器"""
     def __init__(self, host: str, port: int, user: str, passwd: str, 
-                 keep_alive_time: int = 3600, reconnect: bool = True, logger=None):
+                keep_alive_time: int = 3600, reconnect: bool = True, logger=None):
         self.host = host 
         self.port = port
         self.user = user 
