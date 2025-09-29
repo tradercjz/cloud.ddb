@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Optional
 from sqlalchemy.future import select
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
@@ -51,13 +51,18 @@ async def update_environment_status(db: Session, env_id: str, status: str, messa
         env.message = message
         await db.commit()
 
-async def update_environment_after_provisioning(db: Session, env_id: str, status: str, message: str, public_ip: str, container_group_id: str):
+async def update_environment_after_provisioning(db: Session, env_id: str, status: str, message: str, public_ip: str, container_group_id: str, code_server_public_ip: Optional[str] = None,
+    code_server_group_id: Optional[str] = None):
     env = await get_environment(db, env_id)
     if env:
         env.status = status
         env.message = message
         env.public_ip = public_ip
         env.container_group_id = container_group_id
+        if code_server_public_ip:
+            env.code_server_public_ip = code_server_public_ip
+        if code_server_group_id:
+            env.code_server_group_id = code_server_group_id
         await db.commit()
         
 async def get_expired_environments(db: Session):

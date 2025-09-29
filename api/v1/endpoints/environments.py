@@ -1,9 +1,13 @@
 
+import uuid
 from fastapi import APIRouter, Depends, HTTPException, Request, status, Response
-from typing import List
+from typing import List, Optional
 from arq.connections import ArqRedis
 import openai
-
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
+import httpx
+from starlette.background import BackgroundTask
+from starlette.responses import StreamingResponse
 from agent.code_executor import CodeExecutor
 from agent.interactive_sql_executor import InteractiveSQLExecutor
 from agent.tool_manager import ToolManager
@@ -12,7 +16,7 @@ from db.session import get_db
 from db import crud
 from core.security import get_current_user
 from worker import WorkerSettings
-from api.dependencies import get_arq_pool
+from api.dependencies import get_arq_pool_http, get_arq_pool_ws
 from services.aliyun_eci import aliyun_service
 import dolphindb
 from typing import Dict, Any
@@ -30,6 +34,10 @@ from agent.tools.enhanced_ddb_tools import (
 from agent.tools.ddb_tools import RunDolphinDBScriptTool
 from agent.tools.interactive_tools import AskForHumanFeedbackTool, PlanModeResponseTool
 from agent.tools.completion_tool import AttemptCompletionTool
+from fastapi import WebSocket, WebSocketDisconnect
+import websockets
+from starlette.responses import Response
+
 
 router = APIRouter()
 
@@ -38,7 +46,7 @@ async def create_environment(
     env_in: EnvironmentCreate,
     db = Depends(get_db),
     current_user: UserInDB = Depends(get_current_user),
-    arq_pool: ArqRedis = Depends(get_arq_pool)
+    arq_pool: ArqRedis = Depends(get_arq_pool_http)
 ):
     """
     Create a new DolphinDB environment.
@@ -91,7 +99,7 @@ async def delete_environment(
     env_id: str,
     db = Depends(get_db),
     current_user: UserInDB = Depends(get_current_user),
-    arq_pool: ArqRedis = Depends(get_arq_pool)
+    arq_pool: ArqRedis = Depends(get_arq_pool_http)
 ):
     """
     Schedule an environment for deletion.
@@ -562,3 +570,186 @@ async def run_interactive_sql_task(
             yield f"data: {json_payload}\n\n"
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+
+
+# 创建一个可复用的 httpx 异步客户端
+# allow_redirects=False 很重要，让重定向交由浏览器处理
+# timeout 设置得长一些，以防 code-server 有长时间操作
+client = httpx.AsyncClient(base_url="", timeout=30.0, follow_redirects=False)
+
+@router.post("/{env_id}/codeserver/ticket", status_code=200)
+async def create_codeserver_access_ticket(
+    env_id: str,
+    db = Depends(get_db),
+    current_user: UserInDB = Depends(get_current_user), # 这个 endpoint 需要认证
+    redis: ArqRedis = Depends(get_arq_pool_http)
+):
+    """
+    Creates a short-lived, single-use ticket for accessing the code-server iframe.
+    """
+    # 验证用户是否有权访问此环境
+    env = await crud.get_environment(db, env_id=env_id)
+    if not env or env.owner_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Environment not found")
+
+    ticket = f"cs-ticket-{uuid.uuid4().hex}"
+    # 在 Redis 中存储 ticket，并设置 60 秒过期
+    # key: ticket, value: env_id (或者更复杂的json，包含用户信息)
+    await redis.set(ticket, env_id, ex=60)
+    
+    print(f"Generated ticket {ticket} for env {env_id}")
+    return {"ticket": ticket}
+
+@router.api_route("/{env_id}/codeserver/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"])
+async def reverse_proxy_code_server(
+    env_id: str,
+    path: str,
+    request: Request,
+    response: Response,
+    ticket: Optional[str] = None,
+    db = Depends(get_db),
+    redis: ArqRedis = Depends(get_arq_pool_http)
+):
+    """
+    Reverse proxy for the code-server instance associated with an environment.
+    It forwards all requests under /codeserver/{path} to the actual code-server.
+    """
+    
+
+    env = await crud.get_environment(db, env_id=env_id)
+    if not env or env.status != "RUNNING" or not env.code_server_public_ip:
+        logger.error(f"[{env_id}] Environment not ready for proxy. Status: {env.status if env else 'Not Found'}, IP: {env.code_server_public_ip if env else 'N/A'}")
+        raise HTTPException(status_code=409, detail="Code server is not available for this environment.")
+    
+    # 2. 构建目标 URL
+    target_url = f"http://{env.code_server_public_ip}:{env.code_server_port}/{path}"
+    
+    print(f"--- REVERSE PROXY DEBUG ---")
+    print(f"Request path: /{path}")
+    print(f"Target URL constructed: {target_url}")
+    print(f"--------------------------")
+
+    # 3. 准备请求参数，并转发请求
+    # 特别注意要排除 host header，因为它应该指向内部服务，而不是我们的代理
+    headers = {k: v for k, v in request.headers.items() if k.lower() != 'host'}
+    
+    # 确保 forwarded-for header 被正确设置
+    headers['x-forwarded-for'] = request.client.host
+    
+    # 构建请求
+    rp_req = client.build_request(
+        method=request.method,
+        url=target_url,
+        headers=headers,
+        params=request.query_params,
+        content=await request.body()
+    )
+
+    # 发送请求
+    try:
+        rp_resp = await client.send(rp_req, stream=True)
+    except httpx.RequestError as e:
+        raise HTTPException(status_code=503, detail=f"Service unavailable: cannot connect to code-server. {e}")
+
+    # 4. 流式回传响应
+    # 这对于 WebSocket 和大文件传输至关重要
+    return StreamingResponse(
+        rp_resp.aiter_raw(),
+        status_code=rp_resp.status_code,
+        headers=rp_resp.headers,
+        background=BackgroundTask(rp_resp.aclose) # 确保请求关闭
+    )
+    
+
+import logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+@router.websocket("/{env_id}/codeserver/{path:path}")
+async def websocket_proxy(
+    websocket: WebSocket,
+    env_id: str,
+    path: str,
+    ticket: Optional[str] = None,
+    db = Depends(get_db),
+    redis: ArqRedis = Depends(get_arq_pool_ws)
+):
+    """
+    Manually implements a reverse proxy for WebSocket connections with detailed logging.
+    """
+
+    # --- 获取环境信息 ---
+    env = await crud.get_environment(db, env_id=env_id)
+    if not env or env.status != "RUNNING" or not env.code_server_public_ip:
+        logger.error(f"[{env_id}] Environment not ready for WebSocket. Status: {env.status if env else 'Not Found'}, IP: {env.code_server_public_ip if env else 'N/A'}")
+        await websocket.close(code=4004, reason="Code server is not available.")
+        return
+        
+    # --- 构建目标 URL ---
+    target_uri = f"ws://{env.code_server_public_ip}:{env.code_server_port}/{path}?{str(websocket.query_params)}"
+    
+    # --- 日志点 3: 准备接受客户端连接 ---
+    logger.info(f"[{env_id}] Accepting client WebSocket connection...")
+    await websocket.accept()
+    logger.info(f"[{env_id}] Client WebSocket connection accepted.")
+
+    try:
+        # 准备转发的 headers
+        forward_headers = dict(websocket.headers)
+        target_host = f"{env.code_server_public_ip}:{env.code_server_port}"
+        forward_headers['host'] = target_host
+
+        # --- 日志点 4: 尝试连接上游服务器 ---
+        logger.info(f"[{env_id}] Attempting to connect to upstream WebSocket: {target_uri}")
+        
+        async with websockets.connect(
+            target_uri, 
+            #additional_headers=forward_headers,
+            open_timeout=15  # 将超时时间延长到15秒，以便观察
+        ) as upstream_ws:
+            
+            # --- 日志点 5: 成功连接上游服务器 ---
+            logger.info(f"[{env_id}] Successfully connected to upstream WebSocket. Starting bi-directional proxy.")
+            
+            # --- 双向转发逻辑 ---
+            async def consumer(client_ws: WebSocket, upstream_ws_conn):
+                try:
+                    async for message in client_ws.iter_bytes():
+                        await upstream_ws_conn.send(message)
+                except WebSocketDisconnect:
+                    logger.info(f"[{env_id}] Client WebSocket disconnected (consumer side).")
+
+            async def producer(client_ws: WebSocket, upstream_ws_conn):
+                try:
+                    async for message in upstream_ws_conn:
+                        await client_ws.send_bytes(message)
+                except websockets.exceptions.ConnectionClosed:
+                    logger.info(f"[{env_id}] Upstream WebSocket disconnected (producer side).")
+
+            consumer_task = asyncio.create_task(consumer(websocket, upstream_ws))
+            producer_task = asyncio.create_task(producer(websocket, upstream_ws))
+            
+            done, pending = await asyncio.wait(
+                [consumer_task, producer_task],
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            
+            for task in pending:
+                task.cancel()
+            
+            # --- 日志点 6: 代理循环结束 ---
+            logger.info(f"[{env_id}] WebSocket proxy loop finished.")
+
+    except asyncio.TimeoutError:
+        logger.error(f"[{env_id}] TIMEOUT connecting to upstream WebSocket: {target_uri}")
+        await websocket.close(code=1011, reason="Upstream connection timed out.")
+    except websockets.exceptions.InvalidStatusCode as e:
+        logger.error(f"[{env_id}] Upstream WebSocket connection failed with HTTP status {e.status_code}: {target_uri}")
+        await websocket.close(code=4000 + e.status_code, reason=f"Upstream server returned status {e.status_code}")
+    except WebSocketDisconnect:
+        logger.info(f"[{env_id}] Client disconnected before upstream connection was fully established.")
+    except Exception as e:
+        logger.error(f"[{env_id}] An unexpected error occurred in WebSocket proxy: {e}", exc_info=True)
+        if not websocket.client_state == websockets.protocol.State.CLOSED:
+            await websocket.close(code=1011, reason="Proxy error")

@@ -2,5 +2,8 @@
     "python-envs.defaultEnvManager": "ms-python.python:conda",
     "python-envs.defaultPackageManager": "ms-python.python:conda",
     "python-envs.pythonProjects": [],
-    "workbench.colorTheme": "Visual Studio 2017 Light - C++",
+    "workbench.colorTheme": "GitHub Dark Default",
+    "cSpell.words": [
+        "dolphindb"
+    ],
 }

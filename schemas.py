@@ -34,6 +34,8 @@ class EnvironmentPublic(EnvironmentBase):
     message: Optional[str] = None
     public_ip: Optional[str] = None
     port: int
+    code_server_public_ip: Optional[str] = None
+    code_server_port: int
     region_id: str
     created_at: datetime
     expires_at: datetime

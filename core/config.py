@@ -24,6 +24,8 @@ class Settings(BaseSettings):
     ALIYUN_SECURITY_GROUP_ID: str
     ALIYUN_VSWITCH_ID: str
     DDB_CONTAINER_IMAGE_URL: str
+    
+    CODE_SERVER_CONTAINER_IMAGE_URL: str
 
     OPENAI_API_KEY: str
     OPENAI_API_BASE_URL: Optional[str] = None

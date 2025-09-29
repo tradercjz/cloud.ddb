@@ -18,11 +18,36 @@ async def create_environment_task(ctx, env_id: str):
         env_from_db = await crud.get_environment(db, env_id)
         env_schema = EnvironmentPublic.from_orm(env_from_db)
 
-        public_ip, container_group_id = await aliyun_service.create_instance(env_schema)
+        ddb_public_ip, ddb_container_group_id = await aliyun_service.create_instance(env_schema)
         
         await crud.update_environment_after_provisioning(
-            db, env_id, "RUNNING", "Environment is ready.", public_ip, container_group_id
+            db, env_id, "PROVISIONING", "DolphinDB is ready. Creating Code-Server...",
+            public_ip=ddb_public_ip,
+            container_group_id=ddb_container_group_id
         )
+        
+        # --- 阶段 2: 创建 Code-Server 实例 ---
+        print(f"[{env_id}] DolphinDB IP is {ddb_public_ip}. Now creating Code-Server instance...")
+        
+        # 重新从数据库加载环境信息，以防万一
+        env_from_db = await crud.get_environment(db, env_id)
+        env_schema = EnvironmentPublic.from_orm(env_from_db)
+
+        # 调用新的方法创建 Code-Server，并传入 DDB 的 IP
+        cs_public_ip, cs_container_group_id = await aliyun_service.create_code_server_instance(
+            env_schema, ddb_public_ip
+        )
+        
+        # --- 最终更新: 保存所有信息，并将状态设为 RUNNING ---
+        await crud.update_environment_after_provisioning(
+            db, env_id, "RUNNING", "Environment is ready.",
+            public_ip=ddb_public_ip,
+            container_group_id=ddb_container_group_id,
+            code_server_public_ip=cs_public_ip,
+            code_server_group_id=cs_container_group_id
+        )
+
+
     except Exception as e:
         await crud.update_environment_status(db, env_id, "ERROR", str(e))
     finally:
@@ -35,6 +60,11 @@ async def delete_environment_task(ctx, env_id: str):
         env = await crud.get_environment(db, env_id)
         if env.container_group_id:
             await aliyun_service.delete_instance(env.container_group_id, env.region_id)
+            
+        # 2. 删除 Code-Server ECI (如果存在)
+        if env.code_server_group_id:
+            print(f"[{env.id}] Deleting Code-Server instance: {env.code_server_group_id}")
+            await aliyun_service.delete_instance(env.code_server_group_id, env.region_id)
         await crud.update_environment_status(db, env_id, "DELETED", "Successfully deleted.")
     except Exception as e:
         await crud.update_environment_status(db, env_id, "ERROR", f"Deletion failed: {e}")

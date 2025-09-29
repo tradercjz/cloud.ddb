@@ -28,6 +28,10 @@ class Environment(Base):
     public_ip = Column(String, nullable=True)
     port = Column(Integer, default=8848)
     
+    code_server_group_id = Column(String, nullable=True, unique=True) # code-server ECI 的 ID
+    code_server_public_ip = Column(String, nullable=True)            # code-server ECI 的公网 IP
+    code_server_port = Column(Integer, default=8080)                 # code-server 服务的端口
+    
     spec_cpu = Column(Float)
     spec_memory = Column(Float)
     

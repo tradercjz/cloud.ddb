@@ -98,6 +98,72 @@ class AliyunECIService:
             if hasattr(error, 'data') and error.data.get("Recommend"):
                 print(f"[{env.id}] Aliyun Recommend: {error.data.get('Recommend')}")
             raise error # Re-raise the exception to be caught by the worker
+        
+    async def create_code_server_instance(
+        self, 
+        env: EnvironmentPublic, 
+        dolphindb_host_ip: str
+    ) -> Tuple[str, str]:
+        """
+        Provisions a standalone code-server instance on ECI, injecting the DolphinDB host IP.
+
+        Args:
+            env: The environment schema containing metadata.
+            dolphindb_host_ip: The public IP of the already created DolphinDB instance.
+
+        Returns:
+            A tuple of (public_ip, container_group_id) for the new code-server instance.
+        """
+        client = self._create_client(env.region_id)
+        print(f"[{env.id}] Starting provisioning for Code-Server instance...")
+
+        # 名字要唯一，可以加上 '-cs' 后缀
+        container_group_name = f"codeserver-env-{env.id}"
+
+        # 定义 Code Server 容器
+        code_server_container = eci_models.CreateContainerGroupRequestContainer(
+            name="code-server-container",
+            image=settings.CODE_SERVER_CONTAINER_IMAGE_URL, # 确保已在 config.py 中定义
+            cpu=2.0,  # 可以给 code-server 分配更多资源
+            memory=4.0,
+            port=[eci_models.CreateContainerGroupRequestContainerPort(protocol="TCP", port=env.code_server_port)],
+
+            environment_var=[
+                eci_models.CreateContainerGroupRequestContainerEnvironmentVar(
+                    key="DDB_HOST",
+                    value=dolphindb_host_ip
+                )
+            ]
+        )
+
+        create_request = eci_models.CreateContainerGroupRequest(
+            region_id=env.region_id,
+            container_group_name=container_group_name,
+            security_group_id=settings.ALIYUN_SECURITY_GROUP_ID,
+            v_switch_id=settings.ALIYUN_VSWITCH_ID,
+            auto_create_eip=True,
+            eip_bandwidth=200,
+            container=[code_server_container],
+            tag=[eci_models.CreateContainerGroupRequestTag(key="owner_id", value=str(env.owner_id))]
+        )
+
+        try:
+            print(f"[{env.id}] Sending CreateContainerGroup request for Code-Server...")
+            create_response = await client.create_container_group_with_options_async(create_request, util_models.RuntimeOptions())
+            
+            container_group_id = create_response.body.container_group_id
+            print(f"[{env.id}] Code-Server ECI created with ID: {container_group_id}. Waiting for 'Running' state...")
+
+            public_ip = await self._wait_for_instance_running(client, container_group_id, env.region_id, env.id)
+
+            print(f"[{env.id}] Code-Server provisioning complete. Public IP: {public_ip}")
+            return public_ip, container_group_id
+
+        except Exception as error:
+            print(f"[{env.id}] FAILED to create Code-Server ECI instance. Error: {error}")
+            if hasattr(error, 'data') and error.data.get("Recommend"):
+                print(f"[{env.id}] Aliyun Recommend: {error.data.get('Recommend')}")
+            raise error
 
     async def _wait_for_instance_running(self, client: EciClient, container_group_id: str, region_id: str, env_id: str, timeout_seconds: int = 300) -> str:
         """
