@@ -26,6 +26,7 @@ from agent.tools.enhanced_ddb_tools import (
 from agent.tools.ddb_tools import RunDolphinDBScriptTool
 from agent.tools.interactive_tools import AskForHumanFeedbackTool, PlanModeResponseTool
 from agent.tools.completion_tool import AttemptCompletionTool
+from agent.tools.file_tools import WriteFileTool
 
 router = APIRouter()
 
@@ -43,6 +44,8 @@ async def interactive_chat(
     """
     env: Optional[models.Environment] = None
     
+    print(f"Interactive chat requested by user {current_user.username}, env_id={request.env_id}")
+    
     # --- Conditional Environment Loading ---
     if request.env_id:
         env = await crud.get_environment(db, env_id=request.env_id)
@@ -51,16 +54,20 @@ async def interactive_chat(
         if env.status != "RUNNING" or not env.public_ip:
             raise HTTPException(status_code=409, detail="Environment is not in a RUNNING state.")
 
+    main_loop = asyncio.get_running_loop()
+
     # The async generator and threading logic remains the same
     async def event_generator():
         q = queue.Queue()
         request_specific_executor: Optional[CodeExecutor] = None
 
-        def agent_thread_target():
+        def agent_thread_target(loop):
             nonlocal request_specific_executor
             try:
                 # --- Conditional Tool & Agent Configuration ---
                 tools = []
+                print("XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX")
+                print(f"env:{env}")
                 if env: # Database-aware mode
                     connection_details = {"host": env.public_ip, "port": env.port, "user": "admin", "password": "123456"}
                     request_specific_executor = CodeExecutor(**connection_details)
@@ -79,6 +86,17 @@ async def interactive_chat(
                         AttemptCompletionTool(),
                         SearchKnowledgeBaseTool()
                     ]
+                    
+                    if env.code_server_group_id and env.region_id:
+                        write_tool = WriteFileTool(
+                            region_id=env.region_id,
+                            container_group_id=env.code_server_group_id,
+                            main_event_loop=loop
+                        )
+                        tools.append(write_tool)
+                        print(f"Info: WriteFileTool added for env {env.id} with container_group_id {env.code_server_group_id}.")
+                    else:
+                        print(f"Warning: WriteFileTool not added for env {env.id} because code_server_group_id is missing.")
                 else: # Database-agnostic mode
                     # Limited set of tools for RAG and general tasks
                     tools = [
@@ -113,7 +131,7 @@ async def interactive_chat(
                 if request_specific_executor:
                     request_specific_executor.close()
 
-        thread = threading.Thread(target=agent_thread_target)
+        thread = threading.Thread(target=agent_thread_target, args=(main_loop,))
         thread.start()
 
         # Streaming loop (this part is identical to the original implementation)

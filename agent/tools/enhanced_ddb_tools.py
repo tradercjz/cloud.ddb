@@ -414,6 +414,47 @@ class SearchKnowledgeBaseTool(BaseTool):
         self.chat_prompt_func = _default_chat_prompt
 
         pass
+    
+    @llm.prompt()
+    def _rag_final_answer_prompt(self, user_query: str, context_files_str: str) -> dict:
+        """
+        You are an expert DolphinDB research assistant. Your primary goal is to answer the user's query based *exclusively* on the provided context documents.
+
+        **Context Documents:**
+        I have retrieved the following documents that might be relevant to the user's query. Each document's content is provided.
+
+        <CONTEXT>
+        {{ context_files_str }}
+        </CONTEXT>
+
+        **User's Query:**
+        "{{ user_query }}"
+
+        **Your Task:**
+        1.  Carefully read the user's query and the content of the provided context documents.
+        2.  Formulate a comprehensive and direct answer to the user's query.
+        3.  After your answer, you MUST include a "References" section.
+        4.  In the "References" section, for each document you used to formulate your answer, you MUST list its file path and include a direct quote of the most relevant passage using Markdown blockquote syntax.
+
+        **CRITICAL: If the provided context does not contain enough information to answer the query, you must state that clearly, for example: "The provided documentation does not contain specific information about this topic." Do not invent answers.**
+
+        **MANDATORY OUTPUT FORMAT:**
+
+        [Your comprehensive answer to the user's query goes here.]
+
+        ---
+        **References:**
+        *   **`path/to/relevant_file1.md`**:
+            > [A direct and relevant quote from the file content goes here.]
+        *   **`path/to/relevant_file2.dos`**:
+            > [Another direct and relevant quote from the file content.]
+        """
+        # The llm decorator will handle filling the template from these returned variables.
+        return {
+            "user_query": user_query,
+            "context_files_str": context_files_str
+        }
+
 
     def _get_files_content(self, file_paths: List[str]) -> List[Document]:
         """Reads file contents and creates Document objects."""

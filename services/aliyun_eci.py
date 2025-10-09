@@ -4,6 +4,8 @@ import asyncio
 import time
 from typing import Dict, List, Tuple
 
+import aiohttp
+
 from alibabacloud_eci20180808.client import Client as EciClient
 from alibabacloud_tea_openapi import models as open_api_models
 from alibabacloud_eci20180808 import models as eci_models
@@ -247,6 +249,68 @@ class AliyunECIService:
             if hasattr(error, 'data') and error.data.get("Recommend"):
                 print(f"Aliyun Recommend: {error.data.get('Recommend')}")
             raise error
+
+    async def execute_command(
+        self, 
+        region_id: str,
+        container_group_id: str,
+        container_name: str, # 我们需要知道在哪个容器里执行
+        command: str,
+        timeout_seconds: int = 20
+    ) -> Tuple[bool, str]:
+        """
+        Executes a command in a specified container of an ECI instance.
+
+        Returns:
+            A tuple of (success, output_string).
+        """
+        client = self._create_client(region_id)
+        exec_request = eci_models.ExecContainerCommandRequest(
+            region_id=region_id,
+            container_group_id=container_group_id,
+            container_name=container_name,
+            command=["/bin/sh", "-c", command] # 使用 sh -c 来执行复杂命令
+        )
+
+        try:
+            print(f"[{container_group_id}] Requesting exec WebSocket URL for command: {command[:50]}...")
+            exec_response = await client.exec_container_command_with_options_async(exec_request, util_models.RuntimeOptions())
+            
+            websocket_uri = exec_response.body.web_socket_uri
+            if not websocket_uri:
+                raise Exception("Failed to get a WebSocket URI for exec.")
+
+            print(f"[{container_group_id}] Got WebSocket URI, connecting...")
+            
+            output_buffer = []
+
+            # 使用 aiohttp 连接到阿里云返回的 WebSocket URI
+            async with aiohttp.ClientSession() as session:
+                async with session.ws_connect(websocket_uri, timeout=timeout_seconds) as ws:
+                    # 连接后，阿里云的 exec stream 是双向的
+                    # 我们不需要发送任何 stdin，只需要接收 stdout/stderr
+                    # 阿里云的流协议会在每条消息前加一个字节表示流类型 (0x01 for stdout, 0x02 for stderr)
+                    
+                    async for msg in ws:
+                        if msg.type == aiohttp.WSMsgType.BINARY:
+                            # 忽略第一个字节（流类型指示符）
+                            data = msg.data[1:]
+                            output_buffer.append(data.decode('utf-8', errors='ignore'))
+                        elif msg.type == aiohttp.WSMsgType.ERROR:
+                            raise Exception(f"Exec WebSocket connection error: {ws.exception()}")
+
+            full_output = "".join(output_buffer)
+            print(f"[{container_group_id}] Command executed. Output: {full_output[:100]}...")
+            # 简单的成功判断：如果输出了 "error", "failed", "not found" 等词，则认为失败
+            # 更可靠的方式是让命令自己输出成功/失败标记，例如 `... && echo "SUCCESS"`
+            if any(err in full_output.lower() for err in ["error", "failed", "not found", "no such file"]):
+                return False, f"Command execution likely failed. Output:\n{full_output}"
+            else:
+                return True, full_output
+
+        except Exception as e:
+            print(f"[{container_group_id}] FAILED to execute command. Error: {e}")
+            return False, str(e)
 
 # Create a single instance of the service to be used throughout the application
 aliyun_service = AliyunECIService()

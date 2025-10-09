@@ -234,6 +234,8 @@ class InteractiveSQLExecutor:
                 # 6. Execute action and process result (logic remains the same as before)
                 yield ReactAction(tool_name=tool_name, tool_args=arguments, message=f"🎬 Calling tool: {tool_name}")
                 exec_result = yield from self.tool_manager.call_tool(tool_name, arguments)
+                
+                print(f"[Agent]: Tool '{tool_name}' executed with result: {exec_result}")
                 is_error = not exec_result or not exec_result.success
                 observation_content = ""
                 
