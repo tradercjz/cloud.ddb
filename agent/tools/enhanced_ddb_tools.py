@@ -16,7 +16,7 @@ from rag.text_index_manager import TextIndexManager
 from rag.types import BaseIndexModel 
 from .tool_interface import BaseTool, ToolInput, ensure_generator
 from agent.code_executor import CodeExecutor
-
+from services.jina_faiss_service import JinaFaissService
 
 class InspectDatabaseInput(ToolInput):
     """检查数据库连接和基本信息"""
@@ -396,12 +396,12 @@ class SearchKnowledgeBaseTool(BaseTool):
     )
     args_schema = SearchKnowledgeBaseInput
 
-    def __init__(self):
+    def __init__(self, jina_service: JinaFaissService):
         self.project_path = "/home/jzchen/ddb_agent"
         self.index_file = "/home/jzchen/ddb_agent/.ddb_agent/file_index.json"
         self.index_manager = TextIndexManager("/home/jzchen/ddb_agent", self.index_file)
         self.context_builder = ContextBuilder(model_name=os.getenv("LLM_MODEL"), max_window_size=128000)
-
+        self.jina_faiss_service = jina_service
 
         @llm.prompt()
         def _default_chat_prompt(conversation_history: List[Dict[str, str]]):
@@ -527,9 +527,22 @@ class SearchKnowledgeBaseTool(BaseTool):
         """
         try:
             # DDBRAG.retrieve 是一个生成器，我们需要消耗它来获取最终结果
-            relevant_files = yield from  self.retrieve(args.query, top_k=3)
+            #relevant_files = yield from  self.retrieve(args.query, top_k=3)
             
-            #print("Relevant files:", relevant_files)
+            relevant_files = self.jina_faiss_service.retrieve(args.query, top_k=7)
+
+            
+            print("Relevant files:", relevant_files)
+            
+            file_context_str = "\n---\n".join(
+                f"File: {f.file_path}\n\n{f.source_code}" for f in relevant_files
+            )
+            
+            print("File context string:", file_context_str)
+            return ExecutionResult(
+                success=True,
+                data=f"Found {len(relevant_files)} relevant documents:\n\n{file_context_str}"
+            )
 
             # 2. 上下文构建
             system_prompt = "You are a helpful assistant. Your task is to answer the user's question strictly based on the information found in the provided official DolphinDB documentation links. If you cannot find a direct answer in the provided links, you must state that you cannot find a built-in function for this purpose based on the documentation. Do not use any prior knowledge."

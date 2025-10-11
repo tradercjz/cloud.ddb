@@ -19,6 +19,7 @@ from agent.tools.enhanced_ddb_tools import (
 from agent.tools.interactive_tools import AskForHumanFeedbackTool, PlanModeResponseTool
 from agent.tools.completion_tool import AttemptCompletionTool
 from agent.code_executor import CodeExecutor
+from services.jina_faiss_service import JinaFaissService
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -30,6 +31,14 @@ async def lifespan(app: FastAPI):
     # Create database tables
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        
+    print("INFO:     Initializing JinaFaissService...")
+    # 创建实例并将其挂载到 app.state
+    app.state.jina_faiss_service = JinaFaissService()
+    if app.state.jina_faiss_service.is_initialized:
+        print("INFO:     JinaFaissService initialized successfully.")
+    else:
+        print("WARNING:  JinaFaissService failed to initialize. 'jina' RAG mode will be unavailable.")
 
     print("INFO:     Initializing Stateless Agent Components...")
     try:
@@ -54,7 +63,7 @@ async def lifespan(app: FastAPI):
             AskForHumanFeedbackTool(),
             PlanModeResponseTool(),
             AttemptCompletionTool(),
-            SearchKnowledgeBaseTool()
+            #SearchKnowledgeBaseTool()
         ])
         
         # 初始化交互式SQL执行器

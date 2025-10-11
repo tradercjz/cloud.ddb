@@ -27,15 +27,20 @@ from agent.tools.ddb_tools import RunDolphinDBScriptTool
 from agent.tools.interactive_tools import AskForHumanFeedbackTool, PlanModeResponseTool
 from agent.tools.completion_tool import AttemptCompletionTool
 from agent.tools.file_tools import WriteFileTool
+from services.jina_faiss_service import JinaFaissService
 
 router = APIRouter()
+
+def get_jina_faiss_service(request: Request) -> JinaFaissService:
+    return request.app.state.jina_faiss_service
 
 @router.post("/")
 async def interactive_chat(
     request: InteractiveSQLRequest,
     fastapi_request: Request, # Renamed to avoid conflict
     db = Depends(get_db),
-    current_user: UserInDB = Depends(get_current_user)
+    current_user: UserInDB = Depends(get_current_user),
+    jina_service: JinaFaissService = Depends(get_jina_faiss_service)
 ):
     """
     Handles all interactive AI chat sessions.
@@ -84,7 +89,7 @@ async def interactive_chat(
                         AskForHumanFeedbackTool(),
                         PlanModeResponseTool(),
                         AttemptCompletionTool(),
-                        SearchKnowledgeBaseTool()
+                        SearchKnowledgeBaseTool(jina_service=jina_service)
                     ]
                     
                     if env.code_server_group_id and env.region_id:
@@ -103,7 +108,7 @@ async def interactive_chat(
                         AskForHumanFeedbackTool(),
                         PlanModeResponseTool(),
                         AttemptCompletionTool(),
-                        SearchKnowledgeBaseTool()
+                        SearchKnowledgeBaseTool(jina_service=jina_service)
                         # Note: No database tools are included here
                     ]
 
