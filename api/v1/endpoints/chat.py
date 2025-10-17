@@ -49,7 +49,7 @@ async def interactive_chat(
     """
     env: Optional[models.Environment] = None
     
-    print(f"Interactive chat requested by user {current_user.username}, env_id={request.env_id}")
+    print(f"Interactive chat requested by user {current_user.email}, env_id={request.env_id}")
     
     # --- Conditional Environment Loading ---
     if request.env_id:

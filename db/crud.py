@@ -9,18 +9,70 @@ from core.security import get_password_hash
 from core.config import settings
 
 # User CRUD
-async def get_user_by_username(db: Session, username: str):
-    result = await db.execute(select(models.User).filter(models.User.username == username))
+async def get_user_by_email(db: Session, email: str): 
+    result = await db.execute(select(models.User).filter(models.User.email == email))
     return result.scalars().first()
 
 async def create_user(db: Session, user: UserCreate):
     hashed_password = get_password_hash(user.password)
-    db_user = models.User(username=user.username, hashed_password=hashed_password)
+    db_user = models.User(email=user.email, hashed_password=hashed_password, is_active=False)
     db.add(db_user)
     await db.commit()
     await db.refresh(db_user)
     return db_user
 
+async def activate_user(db: Session, user: models.User): 
+    user.is_active = True
+    await db.commit()
+    await db.refresh(user)
+    return user
+
+async def create_verification_code(db: Session, user_id: int, code: str) -> models.VerificationCode:
+    expires_at = datetime.utcnow() + timedelta(minutes=settings.EMAIL_VERIFICATION_CODE_EXPIRE_MINUTES)
+    db_code = models.VerificationCode(user_id=user_id, code=code, expires_at=expires_at)
+    db.add(db_code)
+    await db.commit()
+    await db.refresh(db_code)
+    return db_code
+
+async def get_verification_code(db: Session, email: str, code: str) -> Optional[models.VerificationCode]:
+    result = await db.execute(
+        select(models.VerificationCode)
+        .join(models.User)
+        .filter(
+            models.User.email == email,
+            models.VerificationCode.code == code,
+            models.VerificationCode.expires_at > datetime.utcnow()
+        )
+    )
+    return result.scalars().first()
+
+async def delete_verification_code(db: Session, code_id: int): 
+    result = await db.execute(select(models.VerificationCode).filter(models.VerificationCode.id == code_id))
+    db_code = result.scalars().first()
+    if db_code:
+        await db.delete(db_code)
+        await db.commit()
+        
+async def get_latest_verification_code_for_user(db: Session, user_id: int) -> Optional[models.VerificationCode]:
+    """获取用户最近创建的一个验证码，用于速率限制检查。"""
+    result = await db.execute(
+        select(models.VerificationCode)
+        .filter(models.VerificationCode.user_id == user_id)
+        .order_by(models.VerificationCode.created_at.desc())
+    )
+    return result.scalars().first()
+
+async def delete_all_verification_codes_for_user(db: Session, user_id: int):
+    """删除一个用户所有已存在的验证码。"""
+    codes_to_delete = await db.execute(
+        select(models.VerificationCode).filter(models.VerificationCode.user_id == user_id)
+    )
+    for code in codes_to_delete.scalars().all():
+        await db.delete(code)
+    await db.commit()
+        
+        
 # Environment CRUD
 async def get_environment(db: Session, env_id: str):
     result = await db.execute(select(models.Environment).filter(models.Environment.id == env_id))

@@ -4,6 +4,7 @@ from arq import create_pool
 
 from core.config import settings
 from api.v1.api import api_router
+from api.middleware import TokenAutoRefreshMiddleware
 from worker import WorkerSettings
 from db.session import engine
 from db.models import Base # Import Base
@@ -89,6 +90,8 @@ app = FastAPI(
     openapi_url=f"{settings.API_V1_STR}/openapi.json",
     lifespan=lifespan
 )
+
+app.add_middleware(TokenAutoRefreshMiddleware)
 
 origins = [
     "*"

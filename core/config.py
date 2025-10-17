@@ -1,4 +1,4 @@
-from pydantic import Field
+from pydantic import EmailStr, Field
 from pydantic_settings import BaseSettings 
 
 from typing import Literal, Optional
@@ -57,6 +57,18 @@ class Settings(BaseSettings):
         default="my_docs_chunks_advanced.pkl", 
         description="Path to the pickled document chunks corresponding to the Faiss index."
     )
+    
+    EMAIL_SERVICE_MODE: Literal["mock", "real"] = Field(
+        default="real",
+        description="'mock' to print emails to console, 'real' to send actual emails."
+    )
+    SMTP_HOST: Optional[str] = Field(None, description="SMTP server host.")
+    SMTP_PORT: Optional[int] = Field(587, description="SMTP server port (587 for TLS is recommended).")
+    SMTP_USER: Optional[str] = Field(None, description="Username for SMTP login.")
+    SMTP_PASSWORD: Optional[str] = Field(None, description="Password for SMTP login (use App Password for services like Gmail).")
+    EMAILS_FROM_EMAIL: Optional[EmailStr] = Field(None, description="The 'From' email address for outgoing emails.")
+    EMAILS_FROM_NAME: Optional[str] = Field("DolphinDB Cloud Service", description="The 'From' name for outgoing emails.")
+    EMAIL_VERIFICATION_CODE_EXPIRE_MINUTES: int = Field(10, description="Minutes until the verification code expires.")
 
     class Config:
         case_sensitive = True

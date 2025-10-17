@@ -1,11 +1,28 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, EmailStr, Field
 from typing import List, Optional, Dict, Any
 from datetime import datetime
 
 # --- User Schemas ---
 class UserBase(BaseModel):
-    username: str
+    email: EmailStr 
+    
 
+class UserRegister(UserBase):
+    password: str = Field(..., min_length=8)
+    
+class UserInDB(UserBase):
+    id: int
+    is_active: bool
+    class Config:
+        from_attributes = True
+
+class EmailVerificationRequest(BaseModel):
+    email: EmailStr
+    code: str = Field(..., min_length=6, max_length=6)
+    
+class ResendVerificationRequest(BaseModel):
+    email: EmailStr
+    
 class UserCreate(UserBase):
     password: str
 
